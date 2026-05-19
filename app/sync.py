@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from app.crawler import MoexClient
-from app.models import AliasRule, NormalizedCatalog, ParsedPaper, SourceExamPage, SyncFailure
+from app.models import AliasRule, ExamAttachment, NormalizedCatalog, ParsedPaper, SourceExamPage, SyncFailure
 from app.normalizer import normalize_papers
 from app.storage import MirrorStore
 
@@ -25,6 +25,14 @@ def _asset_name_for(storage_key: str) -> str:
     return storage_key.replace("/", "__")
 
 
+def _mirror_prefix_for_attachment(page: SourceExamPage, attachment: ExamAttachment) -> str:
+    return f"{page.year_roc}/{page.source_exam_id}/exam/{attachment.file_type}"
+
+
+def _mirror_prefix_for_paper(page: SourceExamPage, paper: ParsedPaper, file_type: str) -> str:
+    return f"{page.year_roc}/{page.source_exam_id}/{paper.category_code}/{paper.subject_code}/{file_type}"
+
+
 def sync_exam_pages(
     client: MoexClient,
     exam_codes: list[tuple[str, int]],
@@ -43,9 +51,11 @@ def sync_exam_pages(
 
         for attachment in page.attachments:
             try:
-                downloaded = client.download_file(attachment.download_url_source)
-                storage_key = f"{page.year_roc}/{page.source_exam_id}/exam/{attachment.file_type}{_extension_for(downloaded.content_type, downloaded.file_name)}"
-                stored = mirror_store.write_bytes(storage_key, downloaded.data)
+                stored = mirror_store.find_existing(_mirror_prefix_for_attachment(page, attachment))
+                if stored is None:
+                    downloaded = client.download_file(attachment.download_url_source)
+                    storage_key = f"{_mirror_prefix_for_attachment(page, attachment)}{_extension_for(downloaded.content_type, downloaded.file_name)}"
+                    stored = mirror_store.write_bytes(storage_key, downloaded.data)
                 attachment.storage_key = stored.storage_key
                 attachment.asset_name = _asset_name_for(stored.storage_key)
                 attachment.checksum = stored.checksum
@@ -66,12 +76,11 @@ def sync_exam_pages(
         for paper in page.papers:
             for file_type, download_url in paper.files.items():
                 try:
-                    downloaded = client.download_file(download_url)
-                    storage_key = (
-                        f"{page.year_roc}/{page.source_exam_id}/{paper.category_code}/{paper.subject_code}/"
-                        f"{file_type}{_extension_for(downloaded.content_type, downloaded.file_name)}"
-                    )
-                    stored = mirror_store.write_bytes(storage_key, downloaded.data)
+                    stored = mirror_store.find_existing(_mirror_prefix_for_paper(page, paper, file_type))
+                    if stored is None:
+                        downloaded = client.download_file(download_url)
+                        storage_key = f"{_mirror_prefix_for_paper(page, paper, file_type)}{_extension_for(downloaded.content_type, downloaded.file_name)}"
+                        stored = mirror_store.write_bytes(storage_key, downloaded.data)
                     paper.mirror_files[file_type] = {
                         "storage_key": stored.storage_key,
                         "asset_name": _asset_name_for(stored.storage_key),

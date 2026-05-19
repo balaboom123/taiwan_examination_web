@@ -17,6 +17,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('gh release view "$MOEX_RELEASE_TAG" --json assets', workflow)
         self.assertIn('if [ "$asset_count" -gt 0 ]', workflow)
 
+    def test_incremental_workflow_runs_weekly_for_latest_year(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "sync-incremental.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn('- cron: "15 3 * * 1"', workflow)
+        self.assertIn("python -m app sync-incremental --years 1", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,11 +19,11 @@
 ```bash
 python -m app discover
 python -m app sync-full
-python -m app sync-incremental --years 3
+python -m app sync-incremental --years 1
 python -m app build-site
 ```
 
-`sync-incremental --years 3` 代表抓最近 3 個可用年度，並重新產生受影響 canonical 的 zip。
+`sync-incremental --years 1` 代表抓最新 1 個可用年度，並重新產生受影響 canonical 的 zip。排程 workflow 目前每週執行一次。
 
 ## Bundle URL
 

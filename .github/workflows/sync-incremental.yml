@@ -3,7 +3,7 @@ name: sync-incremental
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 3 * * *"
+    - cron: "15 3 * * 1"
 
 permissions:
   contents: write
@@ -42,7 +42,7 @@ jobs:
 
       - name: Run incremental sync
         run: >
-          python -m app sync-incremental --years 3
+          python -m app sync-incremental --years 1
           --bundle-base-url "https://github.com/${{ github.repository }}/releases/download/${{ env.MOEX_RELEASE_TAG }}"
 
       - name: Upload canonical bundles
