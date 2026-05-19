@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import ssl
 from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
@@ -15,6 +16,7 @@ BASE_URL = "https://wwwq.moex.gov.tw/exam/"
 SEARCH_PATH = "wFrmExamQandASearch.aspx"
 DOWNLOAD_PATH = "wHandExamQandA_File.ashx"
 USER_AGENT = "Mozilla/5.0 (compatible; moex-mirror/1.0)"
+TWCA_CA_BUNDLE_PATH = Path(__file__).with_name("twca-ca-bundle.pem")
 
 FILE_TYPE_MAP = {
     "Q": "question",
@@ -40,6 +42,13 @@ def make_download_url(href: str) -> str:
 
 def _year_roc(year_ad: int) -> int:
     return year_ad - 1911
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    # MOEX currently serves a TWCA chain that is not trusted by Python's default CA bundle here.
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=str(TWCA_CA_BUNDLE_PATH))
+    return context
 
 
 class _SearchPageParser(HTMLParser):
@@ -253,12 +262,13 @@ class DownloadedFile:
 
 
 class MoexClient:
-    def __init__(self, user_agent: str = USER_AGENT) -> None:
+    def __init__(self, user_agent: str = USER_AGENT, ssl_context: ssl.SSLContext | None = None) -> None:
         self.user_agent = user_agent
+        self.ssl_context = ssl_context or _build_ssl_context()
 
     def _fetch_text(self, url: str) -> str:
         request = Request(url, headers={"User-Agent": self.user_agent})
-        with urlopen(request, timeout=60) as response:
+        with urlopen(request, timeout=60, context=self.ssl_context) as response:
             return response.read().decode("utf-8", "ignore")
 
     def discover_available_years(self) -> list[int]:
@@ -273,7 +283,7 @@ class MoexClient:
 
     def download_file(self, url: str) -> DownloadedFile:
         request = Request(url, headers={"User-Agent": self.user_agent})
-        with urlopen(request, timeout=120) as response:
+        with urlopen(request, timeout=120, context=self.ssl_context) as response:
             content_disposition = response.headers.get("Content-Disposition", "")
             file_name_match = re.search(r'filename="?([^"]+)"?', content_disposition)
             file_name = unescape(file_name_match.group(1)) if file_name_match else Path(urlparse(url).path).name
@@ -282,4 +292,3 @@ class MoexClient:
                 content_type=response.headers.get("Content-Type", "application/octet-stream"),
                 file_name=file_name,
             )
-
