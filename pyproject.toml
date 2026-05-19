@@ -1,0 +1,10 @@
+[project]
+name = "taiwan-examination-web"
+version = "0.1.0"
+description = "Mirror and normalize exam papers from MOEX."
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+

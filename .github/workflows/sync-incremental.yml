@@ -1,0 +1,63 @@
+name: sync-incremental
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 3 * * *"
+
+permissions:
+  contents: write
+
+env:
+  MOEX_RELEASE_TAG: mirror-files
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run incremental sync
+        run: >
+          python -m app sync-incremental --years 3
+          --mirror-base-url "https://github.com/${{ github.repository }}/releases/download/${{ env.MOEX_RELEASE_TAG }}"
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$MOEX_RELEASE_TAG" >/dev/null 2>&1 || \
+          gh release create "$MOEX_RELEASE_TAG" --title "MOEX mirror files" --notes "Exam file mirror assets"
+
+      - name: Upload mirror assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          tag = "mirror-files"
+          assets = json.loads(Path("data/release-assets.json").read_text(encoding="utf-8"))
+          for asset in assets:
+              local_path = Path("mirror") / asset["storage_key"]
+              if not local_path.exists():
+                  continue
+              spec = f"{local_path}#{asset['asset_name']}"
+              subprocess.run(["gh", "release", "upload", tag, spec, "--clobber"], check=True)
+          PY
+
+      - name: Commit regenerated data and site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data site
+          git diff --cached --quiet || git commit -m "chore: refresh incremental exam index"
+          git push

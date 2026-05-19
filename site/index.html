@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>考選部考古題鏡像</title>
+  <style>
+    :root { color-scheme: light; --bg: #f2ede4; --card: #fffdf8; --ink: #202020; --accent: #0f766e; --line: #d9d2c5; }
+    body { margin: 0; font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif; background: radial-gradient(circle at top, #fff8e8, var(--bg)); color: var(--ink); }
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+    h1 { margin-bottom: 8px; font-size: 2rem; }
+    p { margin-top: 0; color: #555; }
+    .controls { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 24px 0; }
+    select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: white; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 16px; overflow: hidden; box-shadow: 0 14px 40px rgba(32,32,32,0.08); }
+    th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { background: #f4efe4; font-weight: 700; }
+    a { color: var(--accent); }
+    .muted { color: #666; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>考選部考古題鏡像</h1>
+    <p>先以結構化索引和基本瀏覽為主，保留原始名稱並提供跨年 canonical 聚合。</p>
+    <div class="controls">
+      <label>類別<select id="canonicalFilter"><option value="">全部</option></select></label>
+      <label>年度<select id="yearFilter"><option value="">全部</option></select></label>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Canonical</th>
+          <th>年度</th>
+          <th>科目</th>
+          <th>原始類別</th>
+          <th>鏡像</th>
+          <th>官方來源</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+  <script>
+    const papers = [];
+    const rows = document.getElementById('rows');
+    const canonicalFilter = document.getElementById('canonicalFilter');
+    const yearFilter = document.getElementById('yearFilter');
+    function render() {
+      const canonical = canonicalFilter.value;
+      const year = yearFilter.value;
+      const filtered = papers.filter((paper) => (!canonical || paper.canonical_name === canonical) && (!year || String(paper.year_roc) === year));
+      rows.innerHTML = filtered.map((paper) => `
+        <tr>
+          <td><strong>${paper.canonical_name}</strong><div class="muted">${paper.canonical_id}</div></td>
+          <td>${paper.year_roc}</td>
+          <td>${paper.subject_name_raw}<div class="muted">${paper.file_type}</div></td>
+          <td>${paper.category_raw || paper.exam_name_raw}</td>
+          <td>${paper.download_url_mirror ? `<a href="${paper.download_url_mirror}">鏡像檔案</a>` : '<span class="muted">未設定</span>'}</td>
+          <td><a href="${paper.download_url_source}">官方連結</a></td>
+        </tr>
+      `).join('');
+    }
+    canonicalFilter.addEventListener('change', render);
+    yearFilter.addEventListener('change', render);
+    render();
+  </script>
+</body>
+</html>
