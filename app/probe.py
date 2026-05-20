@@ -54,9 +54,7 @@ class ProbeResult:
     updated_manifest: SourceManifest = field(default_factory=SourceManifest)
 
     def to_output_data(self) -> dict[str, object]:
-        data = asdict(self)
-        data.pop("updated_manifest", None)
-        return data
+        return asdict(self)
 
 
 def _initial_counts() -> dict[str, int]:

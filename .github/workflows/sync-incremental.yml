@@ -37,6 +37,15 @@ jobs:
           )
           echo "should_sync=$should_sync" >> "$GITHUB_OUTPUT"
 
+      - name: Commit source manifest
+        if: steps.probe.outputs.should_sync != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/source-manifest.json
+          git diff --cached --quiet || git commit -m "chore: refresh source manifest"
+          git push
+
       - name: Ensure release exists
         if: steps.probe.outputs.should_sync == 'true'
         env:
@@ -89,7 +98,7 @@ jobs:
           desired = {asset["asset_name"] for asset in json.loads(Path("data/release-assets.json").read_text(encoding="utf-8"))}
           current = json.loads(subprocess.check_output(["gh", "release", "view", tag, "--json", "assets"], text=True))
           for asset in current.get("assets", []):
-              if asset["name"] not in desired:
+              if asset["name"].endswith(".zip") and asset["name"] not in desired:
                   subprocess.run(["gh", "release", "delete-asset", tag, asset["name"], "--yes"], check=True)
           PY
 

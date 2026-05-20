@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.bundler import build_bundles
 from app.crawler import MoexClient, year_ad_from_code
-from app.manifest import load_source_manifest, write_source_manifest
+from app.manifest import load_source_manifest, source_manifest_from_data, write_source_manifest
 from app.models import BundleAsset, NormalizedCatalog, NormalizedPaper
 from app.normalizer import load_alias_rules
 from app.publisher import build_site, write_data_files
@@ -97,6 +97,12 @@ def _download_affected_bundles(bundle_dir: Path, existing_bundles: list[BundleAs
         subprocess.run(["gh", "release", "download", release_tag, "--pattern", asset_name, "--dir", str(bundle_dir)], check=True)
 
 
+def _write_probe_manifest_if_present(probe: dict[str, object], manifest_path: Path) -> None:
+    updated_manifest = probe.get("updated_manifest")
+    if isinstance(updated_manifest, dict):
+        write_source_manifest(manifest_path, source_manifest_from_data(updated_manifest))
+
+
 def run_sync_targeted(args: argparse.Namespace, client: MoexClient | None = None) -> int:
     probe = json.loads(args.probe.read_text(encoding="utf-8"))
     if not probe.get("should_sync", False):
@@ -116,6 +122,8 @@ def run_sync_targeted(args: argparse.Namespace, client: MoexClient | None = None
         mirror_base_url="",
         download_attachments=args.download_attachments,
     )
+    if sync_failures:
+        return 1
     existing_raw_pages, existing_catalog, existing_bundles, existing_failures = load_existing_state(args.data_dir)
     refreshed_exam_ids = {page.source_exam_id for page in refreshed_raw_pages}
     raw_pages, normalized, preserved_bundles, affected_canonical_ids = merge_targeted_state(
@@ -134,6 +142,8 @@ def run_sync_targeted(args: argparse.Namespace, client: MoexClient | None = None
         normalized=filter_catalog_by_canonical_ids(normalized, affected_canonical_ids),
         bundle_base_url=args.bundle_base_url or args.mirror_base_url,
     )
+    if rebuild_result.failures:
+        return 1
     canonical_order = {bundle.canonical_id: bundle for bundle in preserved_bundles}
     for bundle in rebuild_result.bundles:
         canonical_order[bundle.canonical_id] = bundle
@@ -145,6 +155,7 @@ def run_sync_targeted(args: argparse.Namespace, client: MoexClient | None = None
 
     write_data_files(args.data_dir, raw_pages, normalized, aliases, bundles, failures)
     build_site(args.site_dir, normalized, bundles)
+    _write_probe_manifest_if_present(probe, args.manifest)
     return 0
 
 
@@ -207,6 +218,10 @@ def command_sync(args: argparse.Namespace) -> int:
 
     write_data_files(args.data_dir, raw_pages, normalized, aliases, bundles, failures)
     build_site(args.site_dir, normalized, bundles)
+    if getattr(args, "write_manifest", False) and not failures:
+        manifest = load_source_manifest(args.manifest)
+        result = probe_latest(client=client, manifest=manifest, year_window=len(years), now=datetime.now().astimezone().isoformat())
+        write_source_manifest(args.manifest, result.updated_manifest)
     return 0
 
 
@@ -233,6 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     targeted.add_argument("--mirror-dir", type=Path, default=repo_root / "mirror")
     targeted.add_argument("--bundle-dir", type=Path, default=repo_root / "bundles")
     targeted.add_argument("--aliases", type=Path, default=repo_root / "data" / "aliases.json")
+    targeted.add_argument("--manifest", type=Path, default=repo_root / "data" / "source-manifest.json")
     targeted.add_argument("--bundle-base-url", default="")
     targeted.add_argument("--mirror-base-url", default="")
     targeted.add_argument("--download-attachments", action="store_true", default=False)
@@ -247,9 +263,11 @@ def build_parser() -> argparse.ArgumentParser:
         sync.add_argument("--mirror-dir", type=Path, default=repo_root / "mirror")
         sync.add_argument("--bundle-dir", type=Path, default=repo_root / "bundles")
         sync.add_argument("--aliases", type=Path, default=repo_root / "data" / "aliases.json")
+        sync.add_argument("--manifest", type=Path, default=repo_root / "data" / "source-manifest.json")
         sync.add_argument("--bundle-base-url", default="")
         sync.add_argument("--mirror-base-url", default="")
         sync.add_argument("--download-attachments", action="store_true", default=name == "sync-full")
+        sync.add_argument("--write-manifest", action="store_true", default=False)
         if name == "sync-full":
             sync.add_argument("--years", nargs="*", type=int, default=None)
         else:

@@ -4,8 +4,9 @@ import unittest
 from pathlib import Path
 
 from app.cli import build_parser, main, run_probe_latest, run_sync_targeted
-from app.crawler import ResponseMetadata, make_result_url
-from app.models import ExamOption, ParsedPaper, SourceExamPage
+from app.crawler import DownloadedFile, ResponseMetadata, make_result_url
+from app.models import AliasRule, BundleAsset, ExamOption, NormalizedCatalog, NormalizedPaper, ParsedPaper, SourceExamPage
+from app.publisher import write_data_files
 
 
 class CliBuildSiteTests(unittest.TestCase):
@@ -88,6 +89,14 @@ class CliBuildSiteTests(unittest.TestCase):
 
         self.assertTrue(args.download_attachments)
 
+    def test_sync_incremental_can_write_source_manifest_for_audits(self) -> None:
+        parser = build_parser()
+
+        args = parser.parse_args(["sync-incremental", "--write-manifest", "--manifest", "data/source-manifest.json"])
+
+        self.assertTrue(args.write_manifest)
+        self.assertEqual(args.manifest, Path("data/source-manifest.json"))
+
     def test_probe_latest_parser_accepts_manifest_and_output_paths(self) -> None:
         parser = build_parser()
 
@@ -155,6 +164,7 @@ class CliBuildSiteTests(unittest.TestCase):
         self.assertTrue(probe["should_sync"])
         self.assertEqual(probe["changed_exam_codes"], ["115040"])
         self.assertEqual(probe["exam_years"], {"115040": 2026})
+        self.assertEqual(probe["updated_manifest"]["years"]["2026"]["exam_codes"], ["115040"])
         self.assertEqual(manifest["years"]["2026"]["exam_codes"], ["115040"])
 
     def test_sync_targeted_parser_accepts_probe_path(self) -> None:
@@ -203,6 +213,206 @@ class CliBuildSiteTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertFalse((root / "data").exists())
             self.assertFalse((root / "site").exists())
+
+    def test_run_sync_targeted_fails_closed_when_refreshed_exam_has_download_failure(self) -> None:
+        class FailingTargetedClient:
+            def fetch_exam_page(self, exam_code: str, year_ad: int) -> SourceExamPage:
+                return SourceExamPage(
+                    source_exam_id=exam_code,
+                    year_ad=year_ad,
+                    year_roc=year_ad - 1911,
+                    exam_name_raw="Exam 115030",
+                    attachments=[],
+                    papers=[
+                        ParsedPaper(
+                            category_raw="nurse raw",
+                            category_code="101",
+                            subject_code="0101",
+                            subject_name_raw="Subject",
+                            files={
+                                "question": "https://example.test/question.pdf",
+                                "answer": "https://example.test/answer.pdf",
+                            },
+                        )
+                    ],
+                )
+
+            def download_file(self, url: str) -> DownloadedFile:
+                if url.endswith("answer.pdf"):
+                    raise RuntimeError("temporary download failure")
+                return DownloadedFile(data=b"%PDF-1.7 demo", content_type="application/pdf", file_name=Path(url).name)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            data_dir = root / "data"
+            aliases = [AliasRule(match_type="exact", raw_pattern="nurse raw", canonical_id="nurse", canonical_name="Nurse")]
+            existing_papers = [
+                NormalizedPaper(
+                    canonical_id="nurse",
+                    canonical_name="Nurse",
+                    year_roc=115,
+                    exam_name_raw="Exam 115030",
+                    category_raw="nurse raw",
+                    category_code="101",
+                    source_exam_id="115030",
+                    subject_code="0101",
+                    subject_name_raw="Subject",
+                    paper_code=f"101-0101-{file_type}",
+                    file_type=file_type,
+                    download_url_source=f"https://example.test/old-{file_type}.pdf",
+                    storage_key=f"115/115030/101/0101/{file_type}.pdf",
+                    checksum=f"old-{file_type}",
+                )
+                for file_type in ("question", "answer")
+            ]
+            write_data_files(
+                data_dir=data_dir,
+                raw_pages=[
+                    SourceExamPage(
+                        source_exam_id="115030",
+                        year_ad=2026,
+                        year_roc=115,
+                        exam_name_raw="Exam 115030",
+                        attachments=[],
+                        papers=[],
+                    )
+                ],
+                normalized=NormalizedCatalog(papers=existing_papers, review_queue=[]),
+                aliases=aliases,
+                bundles=[
+                    BundleAsset(
+                        canonical_id="nurse",
+                        canonical_name="Nurse",
+                        years=[115],
+                        file_count=2,
+                        storage_key="bundles/nurse.zip",
+                        asset_name="nurse.zip",
+                    )
+                ],
+                failures=[],
+            )
+            original_papers = (data_dir / "papers.json").read_text(encoding="utf-8")
+            probe_path = root / ".tmp" / "source-probe.json"
+            probe_path.parent.mkdir()
+            probe_path.write_text(
+                json.dumps(
+                    {
+                        "should_sync": True,
+                        "changed_exam_codes": ["115030"],
+                        "removed_exam_codes": [],
+                        "exam_years": {"115030": 2026},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "sync-targeted",
+                    "--probe",
+                    str(probe_path),
+                    "--data-dir",
+                    str(data_dir),
+                    "--site-dir",
+                    str(root / "site"),
+                    "--mirror-dir",
+                    str(root / "mirror"),
+                    "--bundle-dir",
+                    str(root / "bundles"),
+                ]
+            )
+
+            exit_code = run_sync_targeted(args, client=FailingTargetedClient())
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual((data_dir / "papers.json").read_text(encoding="utf-8"), original_papers)
+            self.assertFalse((root / "site").exists())
+
+    def test_run_sync_targeted_writes_probe_manifest_after_successful_sync(self) -> None:
+        class SuccessfulTargetedClient:
+            def fetch_exam_page(self, exam_code: str, year_ad: int) -> SourceExamPage:
+                return SourceExamPage(
+                    source_exam_id=exam_code,
+                    year_ad=year_ad,
+                    year_roc=year_ad - 1911,
+                    exam_name_raw="Exam 115040",
+                    attachments=[],
+                    papers=[
+                        ParsedPaper(
+                            category_raw="nurse raw",
+                            category_code="101",
+                            subject_code="0101",
+                            subject_name_raw="Subject",
+                            files={"question": "https://example.test/question.pdf"},
+                        )
+                    ],
+                )
+
+            def download_file(self, url: str) -> DownloadedFile:
+                return DownloadedFile(data=b"%PDF-1.7 demo", content_type="application/pdf", file_name=Path(url).name)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            data_dir = root / "data"
+            data_dir.mkdir()
+            (data_dir / "aliases.json").write_text(
+                json.dumps(
+                    {
+                        "rules": [
+                            {
+                                "match_type": "exact",
+                                "raw_pattern": "nurse raw",
+                                "canonical_id": "nurse",
+                                "canonical_name": "Nurse",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_payload = {
+                "schema_version": 1,
+                "probe_policy": {},
+                "years": {"2026": {"year_ad": 2026, "exam_codes": ["115040"]}},
+                "exams": {"115040": {"source_exam_id": "115040", "head_content_length": 500}},
+                "files": {},
+            }
+            probe_path = root / ".tmp" / "source-probe.json"
+            probe_path.parent.mkdir()
+            probe_path.write_text(
+                json.dumps(
+                    {
+                        "should_sync": True,
+                        "changed_exam_codes": ["115040"],
+                        "removed_exam_codes": [],
+                        "exam_years": {"115040": 2026},
+                        "updated_manifest": manifest_payload,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "sync-targeted",
+                    "--probe",
+                    str(probe_path),
+                    "--data-dir",
+                    str(data_dir),
+                    "--site-dir",
+                    str(root / "site"),
+                    "--mirror-dir",
+                    str(root / "mirror"),
+                    "--bundle-dir",
+                    str(root / "bundles"),
+                    "--manifest",
+                    str(root / "data" / "source-manifest.json"),
+                ]
+            )
+
+            exit_code = run_sync_targeted(args, client=SuccessfulTargetedClient())
+
+            self.assertEqual(exit_code, 0)
+            manifest = json.loads((data_dir / "source-manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest, manifest_payload)
 
 
 if __name__ == "__main__":

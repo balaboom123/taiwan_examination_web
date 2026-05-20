@@ -25,6 +25,22 @@ class SourceManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unsupported source manifest schema_version: 99"):
                 load_source_manifest(path)
 
+    def test_invalid_top_level_sections_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "source-manifest.json"
+            path.write_text(json.dumps({"schema_version": 1, "years": []}), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "Invalid source manifest years"):
+                load_source_manifest(path)
+
+    def test_invalid_manifest_entries_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "source-manifest.json"
+            path.write_text(json.dumps({"schema_version": 1, "exams": {"115030": []}}), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "Invalid source manifest exams.115030"):
+                load_source_manifest(path)
+
     def test_write_source_manifest_uses_stable_sorted_json(self) -> None:
         manifest = SourceManifest(
             probe_policy={"year_window": 2, "download_attachments_by_default": False},

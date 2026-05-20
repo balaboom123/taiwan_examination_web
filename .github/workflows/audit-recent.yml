@@ -43,6 +43,7 @@ jobs:
       - name: Run recent audit
         run: >
           python -m app sync-incremental --years 2
+          --write-manifest
           --bundle-base-url "https://github.com/${{ github.repository }}/releases/download/${{ env.MOEX_RELEASE_TAG }}"
 
       - name: Upload canonical bundles

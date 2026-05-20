@@ -17,6 +17,8 @@ class WorkflowTests(unittest.TestCase):
 
         self.assertIn("steps.probe.outputs.should_sync == 'true'", workflow)
         self.assertIn(".tmp/source-probe.json", workflow)
+        self.assertIn("steps.probe.outputs.should_sync != 'true'", workflow)
+        self.assertIn("git add data/source-manifest.json", workflow)
 
     def test_incremental_workflow_does_not_download_release_bundles_before_probe(self) -> None:
         workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "sync-incremental.yml"
@@ -31,6 +33,13 @@ class WorkflowTests(unittest.TestCase):
 
         self.assertIn('- cron: "45 3 1 * *"', workflow)
         self.assertIn("python -m app sync-incremental --years 2", workflow)
+        self.assertIn("--write-manifest", workflow)
+
+    def test_incremental_workflow_only_deletes_stale_zip_assets(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "sync-incremental.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn('asset["name"].endswith(".zip")', workflow)
 
 
 if __name__ == "__main__":
